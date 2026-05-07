@@ -9,13 +9,17 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urljoin
 
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 SET_NUMBER = "42143"
 LOCALE = "en-us"
+# LEGO bot protection often blocks headless sessions, so keep browser visible by default.
+HEADLESS = False
 MIN_REQUEST_INTERVAL_SECONDS = 1.0
+CACHE_FILE = Path("price_cache.txt")
 KNOWN_PRODUCT_SLUGS = {
     "42143": "ferrari-daytona-sp3-42143",
 }
@@ -40,10 +44,15 @@ def _lego_goto(page: Page, url: str, limiter: RateLimiter, timeout_ms: int = 450
     page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
 
 
-def _handle_possible_bot_challenge(page: Page, seconds_to_wait: int = 90) -> None:
+def _handle_possible_bot_challenge(page: Page, headless: bool, seconds_to_wait: int = 90) -> None:
     title = (page.title() or "").strip().lower()
     if "just a moment" not in title:
         return
+    if headless:
+        raise RuntimeError(
+            "LEGO showed bot protection while running headless. "
+            "Set HEADLESS = False to manually complete the challenge once."
+        )
     print("LEGO showed bot protection. Please complete the challenge in the browser window.")
     print(f"Waiting up to {seconds_to_wait} seconds for the page to continue...")
     page.wait_for_timeout(seconds_to_wait * 1000)
@@ -81,10 +90,10 @@ def _page_matches_set_number(page: Page, set_number: str) -> bool:
     return set_number in text
 
 
-def _resolve_product_url(page: Page, limiter: RateLimiter, set_number: str) -> str:
+def _resolve_product_url(page: Page, limiter: RateLimiter, set_number: str, headless: bool) -> str:
     search_url = f"https://www.lego.com/{LOCALE}/search?q={set_number}"
     _lego_goto(page, search_url, limiter)
-    _handle_possible_bot_challenge(page)
+    _handle_possible_bot_challenge(page, headless=headless)
     page.wait_for_timeout(2500)
     try:
         return _find_product_url(page, set_number)
@@ -93,7 +102,7 @@ def _resolve_product_url(page: Page, limiter: RateLimiter, set_number: str) -> s
 
     for candidate_url in _candidate_product_urls(set_number):
         _lego_goto(page, candidate_url, limiter)
-        _handle_possible_bot_challenge(page)
+        _handle_possible_bot_challenge(page, headless=headless)
         page.wait_for_timeout(1500)
         if _page_matches_set_number(page, set_number):
             return page.url
@@ -138,27 +147,61 @@ def _extract_price(page: Page) -> str:
     raise RuntimeError("Could not locate a US dollar price on the product page.")
 
 
+def _load_cached_prices(cache_path: Path) -> dict[str, str]:
+    if not cache_path.exists():
+        return {}
+
+    cached_prices: dict[str, str] = {}
+    for line in cache_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "|" not in line:
+            continue
+        set_number, price = line.split("|", maxsplit=1)
+        set_number = set_number.strip()
+        price = price.strip()
+        if set_number and price:
+            cached_prices[set_number] = price
+    return cached_prices
+
+
+def _save_cached_prices(cache_path: Path, prices: dict[str, str]) -> None:
+    lines = [f"{set_number}|{prices[set_number]}" for set_number in sorted(prices)]
+    content = "# set_number|price\n" + "\n".join(lines) + ("\n" if lines else "")
+    cache_path.write_text(content, encoding="utf-8")
+
+
 def main() -> int:
+    cached_prices = _load_cached_prices(CACHE_FILE)
+    cached_price = cached_prices.get(SET_NUMBER)
+    if cached_price:
+        print(f"Set number: {SET_NUMBER}")
+        print(f"Cached US price: {cached_price}")
+        print(f"Loaded from: {CACHE_FILE}")
+        return 0
+
     limiter = RateLimiter(min_interval_seconds=MIN_REQUEST_INTERVAL_SECONDS)
 
     try:
         with sync_playwright() as playwright:
             try:
-                browser = playwright.chromium.launch(headless=False, channel="chrome")
+                browser = playwright.chromium.launch(headless=HEADLESS, channel="chrome")
             except Exception:
-                browser = playwright.chromium.launch(headless=False)
+                browser = playwright.chromium.launch(headless=HEADLESS)
             context = browser.new_context(locale="en-US")
             page = context.new_page()
 
-            product_url = _resolve_product_url(page, limiter, SET_NUMBER)
+            product_url = _resolve_product_url(page, limiter, SET_NUMBER, headless=HEADLESS)
             _lego_goto(page, product_url, limiter)
-            _handle_possible_bot_challenge(page)
+            _handle_possible_bot_challenge(page, headless=HEADLESS)
             page.wait_for_timeout(2500)
             price = _extract_price(page)
+            cached_prices[SET_NUMBER] = price
+            _save_cached_prices(CACHE_FILE, cached_prices)
 
             print(f"Set number: {SET_NUMBER}")
             print(f"Product URL: {product_url}")
             print(f"Current US price: {price}")
+            print(f"Saved to cache: {CACHE_FILE}")
 
             browser.close()
             return 0
