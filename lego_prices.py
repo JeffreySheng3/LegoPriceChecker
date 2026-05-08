@@ -3,14 +3,40 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
+
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
-from resale_price import MAX_RESALE_HISTORY, fetch_resale_prices
+from config import HEADLESS, MAX_RESALE_HISTORY, SET_NUMBER
+from resale_price import fetch_resale_prices
 from retail_price import fetch_retail_price
 
-SET_NUMBER = "42143"
-# Both LEGO and BrickEconomy may require human verification.
-HEADLESS = False
+OUTPUT_FILE = Path("price_report.txt")
+
+
+def _build_report(retail, resale) -> str:
+    lines = [
+        "LEGO Price Report",
+        "=================",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Set number: {SET_NUMBER}",
+        "",
+        "Retail (LEGO.com)",
+        "-----------------",
+        f"Product URL: {retail.product_url}",
+        f"Current US price: {retail.price}",
+        "",
+        "Resale (BrickEconomy)",
+        "----------------------",
+        f"Page URL: {resale.brickeconomy_url}",
+        f"Last {MAX_RESALE_HISTORY} resale listings:",
+    ]
+    for idx, entry in enumerate(resale.entries, start=1):
+        lines.append(f"{idx}. [{entry.marketplace}] {entry.price} ({entry.delta_vs_value})")
+        lines.append(f"   {entry.title}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def main() -> int:
@@ -24,19 +50,10 @@ def main() -> int:
 
             retail = fetch_retail_price(context, SET_NUMBER, headless=HEADLESS)
             resale = fetch_resale_prices(context, SET_NUMBER, headless=HEADLESS, limit=MAX_RESALE_HISTORY)
+            report = _build_report(retail, resale)
+            OUTPUT_FILE.write_text(report, encoding="utf-8")
 
-            print(f"Set number: {SET_NUMBER}")
-            print()
-            print("Retail (LEGO.com):")
-            print(f"- Product URL: {retail.product_url}")
-            print(f"- Current US price: {retail.price}")
-            print()
-            print("Resale (BrickEconomy):")
-            print(f"- Page URL: {resale.brickeconomy_url}")
-            print(f"- Last {MAX_RESALE_HISTORY} resale listings:")
-            for idx, entry in enumerate(resale.entries, start=1):
-                print(f"  {idx}. [{entry.marketplace}] {entry.price} ({entry.delta_vs_value})")
-                print(f"     {entry.title}")
+            print(f"Wrote report to {OUTPUT_FILE}")
 
             browser.close()
             return 0

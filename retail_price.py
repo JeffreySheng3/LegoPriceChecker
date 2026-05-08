@@ -7,11 +7,7 @@ from urllib.parse import urljoin
 
 from playwright.sync_api import BrowserContext, Page
 
-LOCALE = "en-us"
-MIN_REQUEST_INTERVAL_SECONDS = 1.0
-KNOWN_PRODUCT_SLUGS = {
-    "42143": "ferrari-daytona-sp3-42143",
-}
+from config import KNOWN_PRODUCT_SLUGS, LEGO_LOCALE, LEGO_MIN_REQUEST_INTERVAL_SECONDS
 
 
 @dataclass
@@ -71,8 +67,8 @@ def _candidate_product_urls(set_number: str) -> list[str]:
     urls: list[str] = []
     known_slug = KNOWN_PRODUCT_SLUGS.get(set_number)
     if known_slug:
-        urls.append(f"https://www.lego.com/{LOCALE}/product/{known_slug}")
-    urls.append(f"https://www.lego.com/{LOCALE}/product/{set_number}")
+        urls.append(f"https://www.lego.com/{LEGO_LOCALE}/product/{known_slug}")
+    urls.append(f"https://www.lego.com/{LEGO_LOCALE}/product/{set_number}")
     return urls
 
 
@@ -83,7 +79,7 @@ def _page_matches_set_number(page: Page, set_number: str) -> bool:
 
 
 def _resolve_product_url(page: Page, limiter: RateLimiter, set_number: str, headless: bool) -> str:
-    search_url = f"https://www.lego.com/{LOCALE}/search?q={set_number}"
+    search_url = f"https://www.lego.com/{LEGO_LOCALE}/search?q={set_number}"
     _lego_goto(page, search_url, limiter)
     _handle_possible_bot_challenge(page, headless=headless)
     page.wait_for_timeout(2500)
@@ -138,7 +134,7 @@ def _extract_price(page: Page) -> str:
 
 def fetch_retail_price(context: BrowserContext, set_number: str, *, headless: bool) -> RetailResult:
     page = context.new_page()
-    limiter = RateLimiter(min_interval_seconds=MIN_REQUEST_INTERVAL_SECONDS)
+    limiter = RateLimiter(min_interval_seconds=LEGO_MIN_REQUEST_INTERVAL_SECONDS)
     product_url = _resolve_product_url(page, limiter, set_number, headless=headless)
     _lego_goto(page, product_url, limiter)
     _handle_possible_bot_challenge(page, headless=headless)

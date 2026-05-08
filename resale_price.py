@@ -5,10 +5,7 @@ from dataclasses import dataclass
 
 from playwright.sync_api import BrowserContext, Page
 
-MAX_RESALE_HISTORY = 5
-KNOWN_BRICKECONOMY_URLS = {
-    "42143": "https://www.brickeconomy.com/set/42143-1/lego-technic-ferrari-daytona-sp3",
-}
+from config import KNOWN_BRICKECONOMY_URLS, MAX_RESALE_HISTORY
 
 
 @dataclass
